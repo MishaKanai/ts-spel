@@ -522,6 +522,25 @@ describe("Evaluation", () => {
       )(ast)
     ).toEqual(null);
   });
+  it("null-safe navigation short-circuits the entire compound expression", () => {
+    // foo?.bar.baz — if foo is null, the whole expression should be null,
+    // not throw because .baz tries to navigate off null.
+    expect(
+      getEvaluator({ foo: null }, {})(parse("foo?.bar.baz"))
+    ).toEqual(null);
+    // deeper chain
+    expect(
+      getEvaluator({ foo: null }, {})(parse("foo?.bar.baz.qux"))
+    ).toEqual(null);
+    // null-safe in the middle: foo.bar?.baz.qux — if bar is null, abort from there
+    expect(
+      getEvaluator({ foo: { bar: null } }, {})(parse("foo.bar?.baz.qux"))
+    ).toEqual(null);
+    // sanity: if foo is not null, regular chaining still works
+    expect(
+      getEvaluator({ foo: { bar: { baz: 42 } } }, {})(parse("foo?.bar.baz"))
+    ).toEqual(42);
+  });
   it("Should compare string values <", () => {
     const ast = parse(`"a" < "b"`);
     expect(getEvaluator({}, {})(ast)).toEqual(true);

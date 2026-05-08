@@ -3,6 +3,10 @@ import { UnexpectedError } from "./CustomErrors";
 import { compile as compileRegex } from "java-regex-js";
 import JSOG from "jsog";
 
+// Signals that a null-safe operator fired because its head was null, so the
+// entire remaining compound expression should be skipped and resolve to null.
+const NULL_SAFE_SHORT_CIRCUIT = Symbol("NULL_SAFE_SHORT_CIRCUIT");
+
 const stringify = (obj: unknown) => {
   try {
     return JSON.stringify(obj);
@@ -195,17 +199,29 @@ export const getEvaluator = (
         return ast.value;
       case "CompoundExpression": {
         ixOfThisBeforeCompoundOpened.pushCurrent();
-        const res = ast.expressionComponents.reduce((_, curr, i) => {
+        let shortCircuited = false;
+        let compoundResult: unknown = rootContext;
+        ast.expressionComponents.forEach((curr, i) => {
           const isFirst = i === 0;
+          if (shortCircuited) {
+            stack.push(null);
+            return;
+          }
           const res = evaluate(curr, true, isFirst);
-          stack.push(res);
-          return res;
-        }, rootContext);
+          if (res === NULL_SAFE_SHORT_CIRCUIT) {
+            shortCircuited = true;
+            compoundResult = null;
+            stack.push(null);
+          } else {
+            compoundResult = res;
+            stack.push(res);
+          }
+        });
         ast.expressionComponents.forEach(() => {
           stack.pop();
         });
         ixOfThisBeforeCompoundOpened.pop();
-        return res;
+        return compoundResult;
       }
       case "Elvis": {
         const expr = evaluate(ast.expression);
@@ -238,7 +254,7 @@ export const getEvaluator = (
       case "Indexer": {
         const head = getHead();
         if (head === null && ast.nullSafeNavigation) {
-          return null;
+          return NULL_SAFE_SHORT_CIRCUIT;
         }
         const index = ixOfThisBeforeCompoundOpened.hasSome()
           ? (() => {
@@ -556,7 +572,7 @@ export const getEvaluator = (
         const { nullSafeNavigation, expression } = ast;
         const head = getHead();
         if (head === null && nullSafeNavigation) {
-          return null;
+          return NULL_SAFE_SHORT_CIRCUIT;
         }
 
         if (Array.isArray(head)) {
@@ -586,7 +602,7 @@ export const getEvaluator = (
           const head = getHead();
           if (head === null || typeof head === "undefined") {
             if (nullSafeNavigation) {
-              return null;
+              return NULL_SAFE_SHORT_CIRCUIT;
             }
             throw new Error(
               `Cannot chain property "${propertyName}" off of ${
@@ -651,7 +667,7 @@ export const getEvaluator = (
         const { nullSafeNavigation, expression } = ast;
         const head = getHead();
         if (head === null && nullSafeNavigation) {
-          return null;
+          return NULL_SAFE_SHORT_CIRCUIT;
         }
         if (Array.isArray(head)) {
           return head.filter((v, i) => {
@@ -704,7 +720,7 @@ export const getEvaluator = (
         const { nullSafeNavigation, expression } = ast;
         const head = getHead();
         if (head === null && nullSafeNavigation) {
-          return null;
+          return NULL_SAFE_SHORT_CIRCUIT;
         }
 
         if (Array.isArray(head)) {
@@ -726,7 +742,7 @@ export const getEvaluator = (
         const { nullSafeNavigation, expression } = ast;
         const head = getHead();
         if (head === null && nullSafeNavigation) {
-          return null;
+          return NULL_SAFE_SHORT_CIRCUIT;
         }
 
         if (Array.isArray(head)) {
