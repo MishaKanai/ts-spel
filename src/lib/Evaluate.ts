@@ -371,6 +371,24 @@ export const getEvaluator = (
             return currentContext.includes(evaluateArg(ast.args[0]));
           }
         }
+        // Java-style .isEmpty() works on both Java String and Java Collection.
+        // JavaScript strings and arrays don't have it natively, so we hardcode
+        // the case here — agents writing SPEL reach for `.isEmpty()` more often
+        // than the equivalent `.length === 0` or `.length() == 0` forms.
+        if (ast.methodName === "isEmpty") {
+          const currentContext = getHead();
+          if (typeof currentContext === "string" || Array.isArray(currentContext)) {
+            return currentContext.length === 0;
+          }
+        }
+        // Java's String.isBlank(): empty or whitespace-only. No JavaScript
+        // equivalent, but trivial to implement and commonly used.
+        if (ast.methodName === "isBlank") {
+          const currentContext = getHead();
+          if (typeof currentContext === "string") {
+            return currentContext.trim().length === 0;
+          }
+        }
         const head = getHead();
         const valueInTopContext = head?.[ast.methodName];
         if (valueInTopContext) {

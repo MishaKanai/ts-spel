@@ -701,3 +701,47 @@ it("Should handle projection of dictionaries correctly.", () => {
     1, 2,
   ]);
 });
+
+
+describe("Java-style collection/string method shims", () => {
+  describe("isEmpty()", () => {
+    it("returns true for an empty inline list", () => {
+      expect(getEvaluator({}, {})(parse("{}.isEmpty()"))).toBe(true);
+    });
+    it("returns false for a non-empty inline list", () => {
+      expect(getEvaluator({}, {})(parse("{1}.isEmpty()"))).toBe(false);
+    });
+    it("returns true for an empty string", () => {
+      expect(getEvaluator({}, {})(parse("''.isEmpty()"))).toBe(true);
+    });
+    it("returns false for a non-empty string", () => {
+      expect(getEvaluator({}, {})(parse("'hi'.isEmpty()"))).toBe(false);
+    });
+    it("returns false for a whitespace-only string (matches Java semantics — use isBlank for whitespace)", () => {
+      expect(getEvaluator({}, {})(parse("'  '.isEmpty()"))).toBe(false);
+    });
+  });
+
+  describe("isBlank()", () => {
+    it("returns true for an empty string", () => {
+      expect(getEvaluator({}, {})(parse("''.isBlank()"))).toBe(true);
+    });
+    it("returns true for a whitespace-only string", () => {
+      expect(getEvaluator({}, {})(parse("'   '.isBlank()"))).toBe(true);
+    });
+    it("returns true for a string of mixed whitespace types", () => {
+      expect(getEvaluator({}, {})(parse("' \t\n'.isBlank()"))).toBe(true);
+    });
+    it("returns false for a non-blank string", () => {
+      expect(getEvaluator({}, {})(parse("'hi'.isBlank()"))).toBe(false);
+    });
+    it("returns false for a string with whitespace around content", () => {
+      expect(getEvaluator({}, {})(parse("' hi '.isBlank()"))).toBe(false);
+    });
+  });
+
+  it("isEmpty() composes with negation as the common idiom", () => {
+    expect(getEvaluator({}, {})(parse("!{1, 2}.isEmpty()"))).toBe(true);
+    expect(getEvaluator({}, {})(parse("!{}.isEmpty()"))).toBe(false);
+  });
+});
