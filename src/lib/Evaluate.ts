@@ -1,7 +1,55 @@
 import { Ast } from "./Ast";
-import { UnexpectedError } from "./CustomErrors";
+import { ForbiddenAccessError, UnexpectedError } from "./CustomErrors";
 import { compile as compileRegex } from "java-regex-js";
 import JSOG from "jsog";
+
+// A denylist rather than own-property-only lookups: expressions rely on inherited
+// string and array members ('abc'.toUpperCase(), .substring(...)).
+const FORBIDDEN_NAMES = new Set([
+  "constructor",
+  "__proto__",
+  "prototype",
+  "__defineGetter__",
+  "__defineSetter__",
+  "__lookupGetter__",
+  "__lookupSetter__",
+]);
+
+const assertAllowedName = (name: string) => {
+  if (FORBIDDEN_NAMES.has(name)) {
+    throw new ForbiddenAccessError(`Access to "${name}" is not allowed.`);
+  }
+};
+
+// Matches Function and the AsyncFunction, GeneratorFunction and AsyncGeneratorFunction
+// constructors, which all inherit from Function. Comparing against
+// Object.getPrototypeOf(async function () {}).constructor would not work: the ES5 build
+// downlevels that function, so the expression yields plain Function.
+// A backstop for a host that puts Function in functionsAndVariables or the context: it
+// matches by identity, so a bound or cross-realm copy passes. The name denylist is the
+// control.
+const isFunctionConstructor = (value: unknown): boolean => {
+  for (
+    let curr = value;
+    typeof curr === "function";
+    curr = Object.getPrototypeOf(curr)
+  ) {
+    if (curr === Function) {
+      return true;
+    }
+  }
+  return false;
+};
+
+// The receiver is checked too: F.call(null, ...) invokes Function.prototype.call
+// with F as its receiver.
+const assertSafeCall = (fn: unknown, receiver: unknown) => {
+  if (isFunctionConstructor(fn) || isFunctionConstructor(receiver)) {
+    throw new ForbiddenAccessError(
+      "Calling the Function constructor is not allowed."
+    );
+  }
+};
 
 // Signals that a null-safe operator fired because its head was null, so the
 // entire remaining compound expression should be skipped and resolve to null.
@@ -99,6 +147,7 @@ export const getEvaluator = (
     } else if (variableName === "root") {
       return some(stack[0]);
     } else {
+      assertAllowedName(variableName);
       if (Array.isArray(functionsAndVariables)) {
         for (let i = 0; i < functionsAndVariables.length; i++) {
           const res = functionsAndVariables[i][variableName];
@@ -249,6 +298,7 @@ export const getEvaluator = (
             "Variable " + ast.functionName + " is not a function."
           );
         }
+        assertSafeCall(value, undefined);
         return value(...evaluatedArguments);
       }
       case "Indexer": {
@@ -276,6 +326,9 @@ export const getEvaluator = (
               return result;
             })()
           : evaluate(ast.index);
+        if (typeof index === "string") {
+          assertAllowedName(index);
+        }
         if (typeof head === "string" && typeof index === "number") {
           if (index >= 0 && index < head.length) {
             return head[index];
@@ -318,6 +371,7 @@ export const getEvaluator = (
         }, {});
       }
       case "MethodReference": {
+        assertAllowedName(ast.methodName);
         const evaluateArg = (arg: Ast) => {
           if (
             // no index of a currently opened compound expression has been found
@@ -377,7 +431,10 @@ export const getEvaluator = (
         // than the equivalent `.length === 0` or `.length() == 0` forms.
         if (ast.methodName === "isEmpty") {
           const currentContext = getHead();
-          if (typeof currentContext === "string" || Array.isArray(currentContext)) {
+          if (
+            typeof currentContext === "string" ||
+            Array.isArray(currentContext)
+          ) {
             return currentContext.length === 0;
           }
         }
@@ -394,6 +451,7 @@ export const getEvaluator = (
         if (valueInTopContext) {
           const evaluatedArguments = ast.args.map((arg) => evaluateArg(arg)); // <- arguments are evaluated lazily
           if (typeof valueInTopContext === "function") {
+            assertSafeCall(valueInTopContext, head);
             const boundFn = valueInTopContext.bind(head);
             return boundFn(...evaluatedArguments);
           }
@@ -408,6 +466,7 @@ export const getEvaluator = (
             typeof entryInFunctionsAndVariables.value === "function"
           ) {
             const evaluatedArguments = ast.args.map((arg) => evaluateArg(arg));
+            assertSafeCall(entryInFunctionsAndVariables.value, undefined);
             return entryInFunctionsAndVariables.value(...evaluatedArguments);
           }
         }
@@ -615,6 +674,7 @@ export const getEvaluator = (
       }
       case "PropertyReference": {
         const { nullSafeNavigation, propertyName } = ast;
+        assertAllowedName(propertyName);
         if (isCompound && !isFirstInCompound) {
           // we can only get the head.
           const head = getHead();

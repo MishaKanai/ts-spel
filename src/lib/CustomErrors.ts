@@ -75,4 +75,16 @@ export class UnexpectedError extends CustomError {
   }
 }
 
-export type TsSpelError = ParsingError | RuntimeError | UnexpectedError;
+// Thrown for constructor, __proto__, prototype and the legacy accessor helpers, which lead from any value
+// to the Function constructor, and for a call to the Function constructor itself.
+export class ForbiddenAccessError extends CustomError {
+  public constructor(message?: string) {
+    super(message);
+  }
+}
+
+export type TsSpelError =
+  | ParsingError
+  | RuntimeError
+  | UnexpectedError
+  | ForbiddenAccessError;

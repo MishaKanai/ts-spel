@@ -1,4 +1,5 @@
-import { getEvaluator } from "./Evaluate";
+import { ForbiddenAccessError } from "./CustomErrors";
+import { EvalOptions, getEvaluator } from "./Evaluate";
 import { parse } from "./ParseToAst";
 
 describe("Evaluation", () => {
@@ -525,13 +526,13 @@ describe("Evaluation", () => {
   it("null-safe navigation short-circuits the entire compound expression", () => {
     // foo?.bar.baz — if foo is null, the whole expression should be null,
     // not throw because .baz tries to navigate off null.
-    expect(
-      getEvaluator({ foo: null }, {})(parse("foo?.bar.baz"))
-    ).toEqual(null);
+    expect(getEvaluator({ foo: null }, {})(parse("foo?.bar.baz"))).toEqual(
+      null
+    );
     // deeper chain
-    expect(
-      getEvaluator({ foo: null }, {})(parse("foo?.bar.baz.qux"))
-    ).toEqual(null);
+    expect(getEvaluator({ foo: null }, {})(parse("foo?.bar.baz.qux"))).toEqual(
+      null
+    );
     // null-safe in the middle: foo.bar?.baz.qux — if bar is null, abort from there
     expect(
       getEvaluator({ foo: { bar: null } }, {})(parse("foo.bar?.baz.qux"))
@@ -702,7 +703,6 @@ it("Should handle projection of dictionaries correctly.", () => {
   ]);
 });
 
-
 describe("Java-style collection/string method shims", () => {
   describe("isEmpty()", () => {
     it("returns true for an empty inline list", () => {
@@ -743,5 +743,168 @@ describe("Java-style collection/string method shims", () => {
   it("isEmpty() composes with negation as the common idiom", () => {
     expect(getEvaluator({}, {})(parse("!{1, 2}.isEmpty()"))).toBe(true);
     expect(getEvaluator({}, {})(parse("!{}.isEmpty()"))).toBe(false);
+  });
+});
+
+describe("prototype access", () => {
+  const evaluate = (
+    expression: string,
+    context: Record<string, unknown> = {},
+    functionsAndVariables: Record<string, unknown> = {},
+    options?: EvalOptions
+  ) => getEvaluator(context, functionsAndVariables, options)(parse(expression));
+
+  const FORBIDDEN = [
+    "constructor",
+    "__proto__",
+    "prototype",
+    "__defineGetter__",
+    "__defineSetter__",
+    "__lookupGetter__",
+    "__lookupSetter__",
+  ];
+
+  describe.each(FORBIDDEN)("%s", (name) => {
+    it("is refused as a property", () => {
+      expect(() => evaluate(`'a'.${name}`)).toThrow(ForbiddenAccessError);
+      expect(() => evaluate(`#this.${name}`)).toThrow(ForbiddenAccessError);
+    });
+    it("is refused as a method name", () => {
+      expect(() => evaluate(`'a'.${name}()`)).toThrow(ForbiddenAccessError);
+    });
+    it("is refused as a bare identifier", () => {
+      expect(() => evaluate(name)).toThrow(ForbiddenAccessError);
+      expect(() => evaluate(`#${name}`)).toThrow(ForbiddenAccessError);
+      expect(() => evaluate(`#${name}()`)).toThrow(ForbiddenAccessError);
+    });
+    it("is refused as a string index", () => {
+      expect(() => evaluate(`obj['${name}']`, { obj: {} })).toThrow(
+        ForbiddenAccessError
+      );
+      expect(() => evaluate(`obj[key]`, { obj: {}, key: name })).toThrow(
+        ForbiddenAccessError
+      );
+    });
+    it("is refused under null-safe navigation", () => {
+      expect(() => evaluate(`'a'?.${name}`)).toThrow(ForbiddenAccessError);
+      expect(() => evaluate(`'a'?.${name}()`)).toThrow(ForbiddenAccessError);
+      expect(() => evaluate(`x?.${name}`, { x: null })).toThrow(
+        ForbiddenAccessError
+      );
+    });
+    it("is refused when supplied as an own key", () => {
+      const own = JSON.parse(`{"${name}": 1}`);
+      expect(() => evaluate(name, own)).toThrow(ForbiddenAccessError);
+      expect(() => evaluate(`obj.${name}`, { obj: own })).toThrow(
+        ForbiddenAccessError
+      );
+      expect(() => evaluate(`obj['${name}']`, { obj: own })).toThrow(
+        ForbiddenAccessError
+      );
+      expect(() => evaluate(`#${name}`, {}, own)).toThrow(ForbiddenAccessError);
+      expect(() =>
+        evaluate(`obj.${name}`, { obj: {} }, own, { fallbackToVariables: true })
+      ).toThrow(ForbiddenAccessError);
+    });
+  });
+
+  it("refuses a forbidden function name in functionsAndVariables, including the fallbacks", () => {
+    const constructor = jest.fn();
+    const funcs = { constructor };
+    expect(() => evaluate("#constructor()", {}, funcs)).toThrow(
+      ForbiddenAccessError
+    );
+    expect(() =>
+      evaluate("constructor()", {}, funcs, { fallbackToFunctions: true })
+    ).toThrow(ForbiddenAccessError);
+    expect(constructor).not.toHaveBeenCalled();
+  });
+
+  describe("Function constructor guard", () => {
+    // Built from source text because ts-jest compiles this file to ES5, which turns
+    // async and generator literals into plain functions. Function (not vm) keeps
+    // them in Jest's realm, where the evaluator's Function lives.
+    const AsyncFunction = Function(
+      "return (async function () {}).constructor"
+    )();
+    const GeneratorFunction = Function(
+      "return (function* () {}).constructor"
+    )();
+    const AsyncGeneratorFunction = Function(
+      "return (async function* () {}).constructor"
+    )();
+    const constructors: Array<[string, unknown]> = [
+      ["Function", Function],
+      ["AsyncFunction", AsyncFunction],
+      ["GeneratorFunction", GeneratorFunction],
+      ["AsyncGeneratorFunction", AsyncGeneratorFunction],
+    ];
+
+    it.each(constructors)("refuses %s via FunctionReference", (_, F) => {
+      expect(() => evaluate("#F('')", {}, { F })).toThrow(ForbiddenAccessError);
+    });
+    it.each(constructors)("refuses %s via MethodReference", (_, F) => {
+      expect(() => evaluate("host.make('')", { host: { make: F } })).toThrow(
+        ForbiddenAccessError
+      );
+      expect(() =>
+        evaluate("make('')", {}, { make: F }, { fallbackToFunctions: true })
+      ).toThrow(ForbiddenAccessError);
+    });
+    it.each(constructors)(
+      "refuses %s as the receiver of call/apply/bind",
+      (_, F) => {
+        expect(() => evaluate("F.call(null, '')", { F })).toThrow(
+          ForbiddenAccessError
+        );
+        expect(() => evaluate("F.apply(null, {''})", { F })).toThrow(
+          ForbiddenAccessError
+        );
+        expect(() => evaluate("F.bind(null)", { F })).toThrow(
+          ForbiddenAccessError
+        );
+      }
+    );
+    it("still calls ordinary host functions", () => {
+      expect(evaluate("#double(2)", {}, { double: (x: number) => x * 2 })).toBe(
+        4
+      );
+      expect(
+        evaluate("host.greet('a')", {
+          host: { greet: (s: string) => "hi " + s },
+        })
+      ).toBe("hi a");
+      expect(
+        evaluate("greet.call(null, 'a')", { greet: (s: string) => "hi " + s })
+      ).toBe("hi a");
+    });
+  });
+
+  describe("regressions", () => {
+    it("keeps inherited string and array members", () => {
+      expect(evaluate("'abc'.toUpperCase()")).toBe("ABC");
+      expect(evaluate("'abc'.substring(1)")).toBe("bc");
+      expect(evaluate("'abc'.length")).toBe(3);
+      expect(evaluate("'abc'.length()")).toBe(3);
+      expect(evaluate("{1, 2, 3}.length")).toBe(3);
+      expect(evaluate("{1, 2, 3}.size()")).toBe(3);
+    });
+    it("keeps isEmpty() and isBlank()", () => {
+      expect(evaluate("''.isEmpty()")).toBe(true);
+      expect(evaluate("{}.isEmpty()")).toBe(true);
+      expect(evaluate("' '.isBlank()")).toBe(true);
+    });
+    it("resolves own data properties with ordinary names", () => {
+      const obj = { name: "n", value: 1, key: "k", constructorName: "c" };
+      expect(evaluate("obj.name", { obj })).toBe("n");
+      expect(evaluate("obj['value']", { obj })).toBe(1);
+      expect(evaluate("obj?.key", { obj })).toBe("k");
+      expect(evaluate("constructorName", obj)).toBe("c");
+      expect(evaluate("{a: 1}.![key + value]")).toEqual(["a1"]);
+    });
+    it("keeps null-safe short-circuiting for allowed names", () => {
+      expect(evaluate("x?.y.z", { x: null })).toBe(null);
+      expect(evaluate("x?.foo()", { x: null })).toBe(null);
+    });
   });
 });
