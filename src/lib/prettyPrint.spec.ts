@@ -1,3 +1,4 @@
+import { getEvaluator } from "./Evaluate";
 import { parse } from "./ParseToAst";
 import prettyPrint from "./prettyPrint";
 import sampleExpressions from "./sampleExpressions.testdata";
@@ -19,9 +20,36 @@ describe("prettyPrint round-trips", () => {
     "(-a).b",
     "m?['k']",
     "a?.b?['k'].c",
+    "(a.b).c",
+    "(a?.b).c",
+    "(a.b)['k']",
+    "{'': 1}",
+    "0.0000001",
+    "1000000000000000000000",
   ])("%j", (expression) => {
     expect(roundTrip(expression)).toEqual(parse(expression));
   });
+
+  it("keeps a parenthesized null-safe chain's meaning", () => {
+    const expression = "(a?.b).c";
+    const evaluate = (ast: ReturnType<typeof parse>) =>
+      getEvaluator({ a: null }, {})(ast);
+    expect(() => evaluate(parse(expression))).toThrow(
+      'Cannot chain property "c" off of null'
+    );
+    expect(() => evaluate(parse(prettyPrint(parse(expression))))).toThrow(
+      'Cannot chain property "c" off of null'
+    );
+  });
+
+  it.each(["0.0000001", "1000000000000000000000", "123456789012345678901234"])(
+    "prints %s in plain decimal",
+    (expression) => {
+      const printed = prettyPrint(parse(expression));
+      expect(printed).toMatch(/^\d+(\.\d+)?$/);
+      expect(parse(printed)).toEqual(parse(expression));
+    }
+  );
 
   it("keeps the existing output style", () => {
     expect(prettyPrint(parse("a+b*(c+d)"))).toBe("a + b * (c + d)");

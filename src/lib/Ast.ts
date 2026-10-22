@@ -1,6 +1,7 @@
 /**
- * Where `parse` found a node: the half-open range [start, end) of UTF-16 code units in the
- * parsed string, so `input.slice(node.start, node.end)` is the node's source text.
+ * Where `parse(input, graceful, { offsets: true })` found a node: the half-open range
+ * [start, end) of UTF-16 code units in the parsed string, so `input.slice(node.start, node.end)`
+ * is the node's source text. Without `offsets` no node has them.
  *
  * - Leading and trailing whitespace is excluded.
  * - Parentheses around the node itself are excluded; a parent's range covers its children's

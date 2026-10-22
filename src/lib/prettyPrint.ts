@@ -39,6 +39,24 @@ const needsParen = (parent: Ast, child: Ast) => {
   return getOrder(parent) >= getOrder(child);
 };
 
+// String(n) switches to exponent form (1e-7, 1e+21), which the parser does not accept.
+const plainDecimal = (n: number) => {
+  const s = String(n);
+  const m = /^(\d+)(?:\.(\d+))?e([+-]\d+)$/.exec(s);
+  if (!m) {
+    return s;
+  }
+  const digits = m[1] + (m[2] ?? "");
+  const point = m[1].length + Number(m[3]);
+  if (point <= 0) {
+    return `0.${"0".repeat(-point)}${digits}`;
+  }
+  if (point >= digits.length) {
+    return digits + "0".repeat(point - digits.length);
+  }
+  return `${digits.slice(0, point)}.${digits.slice(point)}`;
+};
+
 const quote = (str: string) => `"${str.replace(/"/g, `""`)}"`;
 
 const prettyPrint = (ast: Ast) => {
@@ -50,9 +68,13 @@ const prettyPrint = (ast: Ast) => {
     }
     case "CompoundExpression": {
       // `(a + b).c` parses to [OpPlus, c]; printed bare, the head would re-parse as `a + b.c`.
+      // A compound head must keep its parens too: `(a?.b).c` throws when a is null, because
+      // the null-safe short-circuit stops at the parens, while `a?.b.c` returns null.
       const [head, ...rest] = ast.expressionComponents;
       const headText =
-        getOrder(head) < 9 ? `(${prettyPrint(head)})` : prettyPrint(head);
+        getOrder(head) < 9 || head.type === "CompoundExpression"
+          ? `(${prettyPrint(head)})`
+          : prettyPrint(head);
       return rest.reduce((prev, curr) => {
         switch (curr.type) {
           case "MethodReference":
@@ -103,7 +125,7 @@ const prettyPrint = (ast: Ast) => {
       return "null";
     }
     case "NumberLiteral": {
-      return `${ast.value}`;
+      return plainDecimal(ast.value);
     }
     case "OpAnd": {
       return `${maybeParen(ast.left)} && ${maybeParen(ast.right)}`;

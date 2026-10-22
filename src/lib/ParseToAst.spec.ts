@@ -1,3 +1,4 @@
+import { Ast } from "./Ast";
 import { parse } from "./ParseToAst";
 
 it("should parse empty string", () => {
@@ -791,4 +792,13 @@ it("Parsing:  Object with quoted keys ", () => {
     },
     type: "InlineMap",
   });
+});
+
+it("takes allowWeirdQuoteCharacters as a boolean or an option", () => {
+  const expected: Ast = { type: "StringLiteral", value: "a" };
+  expect(parse("“a”", false, true)).toEqual(expected);
+  expect(parse("“a”", false, { allowWeirdQuoteCharacters: true })).toEqual(
+    expected
+  );
+  expect(() => parse("“a”")).toThrow();
 });

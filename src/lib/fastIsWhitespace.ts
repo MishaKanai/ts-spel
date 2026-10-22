@@ -26,6 +26,7 @@ export const fastCharCodeIsWhitespace = (charCode: number) => {
     case 0x202f:
     case 0x205f:
     case 0x3000:
+    case 0xfeff: // String.prototype.trim removes it, and stringLiteralSPELStyle skips by trim
       return true;
   }
   return false;

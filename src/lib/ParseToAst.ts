@@ -6,6 +6,14 @@ import _stringLiteral from "./stringLiteralSPELStyle";
 // turn true for debugging.
 const logFlag = false;
 
+export type ParseOptions = {
+  offsets?: boolean;
+  allowWeirdQuoteCharacters?: boolean;
+};
+
+const noRange = (_node: Ast, _start: number, _end: number) => {};
+const unranged = (production: () => Ast | null) => production;
+
 /**
  * Produces an AST representing the input SPEL expression
  *
@@ -27,40 +35,58 @@ const logFlag = false;
  * @param graceful - if true, will not error if the expression is incomplete -
  *  to be used for autocompletion
  *  (where we need an AST built to the current position to figure out the context of the current cursor position)
+ * @param options - `offsets: true` records each node's source range (see `SourceRange`).
+ *  A boolean here is the older `allowWeirdQuoteCharacters` argument.
  * @returns AST representing input
  */
-
 export const parse = function (
   input: string,
   graceful = false,
-  allowWeirdQuoteCharacters = false
+  options: ParseOptions | boolean = {}
 ): Ast {
+  const { offsets = false, allowWeirdQuoteCharacters = false } =
+    typeof options === "boolean"
+      ? { allowWeirdQuoteCharacters: options }
+      : options;
   let index = 0;
 
-  // Non-enumerable so that toEqual, JSON.stringify and spread see the same AST as before
-  // offsets existed. A node copied by spread loses them, which is right: its text may differ.
-  const setRange = (node: Ast, start: number, end: number) => {
-    while (start < end && fastCharCodeIsWhitespace(input.charCodeAt(start))) {
-      start++;
-    }
-    while (end > start && fastCharCodeIsWhitespace(input.charCodeAt(end - 1))) {
-      end--;
-    }
-    Object.defineProperties(node, {
-      start: { value: start, writable: true, configurable: true },
-      end: { value: end, writable: true, configurable: true },
-    });
-  };
+  // Opt-in because recording ranges made every parse ~1.6x slower, and graceful parsing runs
+  // on every keystroke. Non-enumerable so that toEqual, JSON.stringify and spread see the same
+  // AST either way; a node copied by spread loses them, which is right: its text may differ.
+  // The extra own properties change node shapes, which would matter if these ASTs fed the
+  // evaluator's hot path; the consumer that wants offsets parses once and never evaluates them.
+  const setRange = !offsets
+    ? noRange
+    : (node: Ast, start: number, end: number) => {
+        while (
+          start < end &&
+          fastCharCodeIsWhitespace(input.charCodeAt(start))
+        ) {
+          start++;
+        }
+        while (
+          end > start &&
+          fastCharCodeIsWhitespace(input.charCodeAt(end - 1))
+        ) {
+          end--;
+        }
+        Object.defineProperties(node, {
+          start: { value: start, writable: true, configurable: true },
+          end: { value: end, writable: true, configurable: true },
+        });
+      };
   // The innermost production that returns a node sets its range; productions that pass a
   // child through unchanged (and parenExpression, so parens stay outside) leave it alone.
-  const ranged = (production: () => Ast | null) => (): Ast | null => {
-    const start = index;
-    const node = production();
-    if (node && !Object.prototype.hasOwnProperty.call(node, "start")) {
-      setRange(node, start, index);
-    }
-    return node;
-  };
+  const ranged = !offsets
+    ? unranged
+    : (production: () => Ast | null) => (): Ast | null => {
+        const start = index;
+        const node = production();
+        if (node && !Object.prototype.hasOwnProperty.call(node, "start")) {
+          setRange(node, start, index);
+        }
+        return node;
+      };
 
   const log = (...args) => {
     if (logFlag) {
@@ -1091,6 +1117,14 @@ export const parse = function (
      * If we're in graceful mode, let's store any lists we find, and only return them if we don't also find a possible 'map'
      */
     let foundGracefulList: Ast;
+    let gracefulListEnd: number;
+    const start = index;
+    // The map attempt below moves index past the list's text; range the list where it ended.
+    const returnGracefulList = () => {
+      setRange(foundGracefulList, start, gracefulListEnd);
+      index = gracefulListEnd;
+      return foundGracefulList;
+    };
     utils.whitSpc();
     if (utils.char("{")) {
       const fnbacktrack = index;
@@ -1128,6 +1162,7 @@ export const parse = function (
             elements: listElements,
             __unclosed: true,
           };
+          gracefulListEnd = index;
         }
       }
       index = fnbacktrack;
@@ -1155,7 +1190,7 @@ export const parse = function (
           let elem: Ast | null;
           if (
             (ident =
-              utils.identifier() ||
+              utils.identifier() ??
               (() => {
                 const identInQuotes = string();
                 if (!identInQuotes) {
@@ -1169,7 +1204,7 @@ export const parse = function (
                   );
                 }
                 return identInQuotes.value;
-              })())
+              })()) !== null
           ) {
             if (utils.char(":") && ((elem = expression()) || graceful)) {
               dict[ident] = elem;
@@ -1192,7 +1227,7 @@ export const parse = function (
           };
         } else if (graceful) {
           if (Object.keys(dict).length === 0) {
-            return foundGracefulList;
+            return foundGracefulList ? returnGracefulList() : foundGracefulList;
           }
           return {
             type: "InlineMap",
@@ -1204,7 +1239,7 @@ export const parse = function (
         index = fnbacktrack;
       }
       if (graceful && foundGracefulList) {
-        return foundGracefulList;
+        return returnGracefulList();
       }
       throw new ParsingError(input, index, "Expected }");
     }
