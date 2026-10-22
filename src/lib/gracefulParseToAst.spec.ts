@@ -338,6 +338,7 @@ it("should gracefully parse an unclosed map inside an unclosed list", () => {
       {
         type: "InlineMap",
         __unclosed: true,
+        __trailingComma: true,
         elements: {
           f: {
             type: "PropertyReference",
@@ -348,5 +349,89 @@ it("should gracefully parse an unclosed map inside an unclosed list", () => {
         },
       },
     ],
+  });
+});
+
+describe("unclosed inline lists the map attempt gives up on", () => {
+  const num = (value: number): Ast => ({ type: "NumberLiteral", value });
+
+  it("keeps a nested unclosed list's elements once", () => {
+    expect(parse("{{1, 2", true)).toEqual<Ast>({
+      type: "InlineList",
+      __unclosed: true,
+      elements: [
+        { type: "InlineList", __unclosed: true, elements: [num(1), num(2)] },
+      ],
+    });
+  });
+
+  it("adds no extra method arguments after an unclosed list", () => {
+    expect(parse("x.m({1, 2) + 3", true)).toEqual<Ast>({
+      type: "OpPlus",
+      _isClosed: false,
+      left: {
+        type: "CompoundExpression",
+        expressionComponents: [
+          {
+            type: "PropertyReference",
+            nullSafeNavigation: false,
+            propertyName: "x",
+          },
+          {
+            type: "MethodReference",
+            nullSafeNavigation: false,
+            methodName: "m",
+            args: [
+              {
+                type: "InlineList",
+                __unclosed: true,
+                elements: [num(1), num(2)],
+              },
+            ],
+          },
+        ],
+      },
+      right: num(3),
+    });
+  });
+
+  it("leaves between open while its list is unclosed", () => {
+    expect(parse("a between {1", true)).toEqual<Ast>({
+      type: "OpBetween",
+      _isClosed: false,
+      left: {
+        type: "PropertyReference",
+        nullSafeNavigation: false,
+        propertyName: "a",
+      },
+      right: { type: "InlineList", __unclosed: true, elements: [num(1)] },
+    });
+  });
+});
+
+describe("unclosed inline map ending on a comma", () => {
+  it("keeps a real '' key and flags the trailing comma", () => {
+    expect(parse("{'': 1, ", true)).toEqual<Ast>({
+      type: "InlineMap",
+      __unclosed: true,
+      __trailingComma: true,
+      elements: { "": { type: "NumberLiteral", value: 1 } },
+    });
+  });
+
+  it("still adds the '' marker when there is no '' key", () => {
+    expect(parse("{a: 1, ", true)).toEqual<Ast>({
+      type: "InlineMap",
+      __unclosed: true,
+      __trailingComma: true,
+      elements: {
+        a: { type: "NumberLiteral", value: 1 },
+        "": null as any as Ast,
+      },
+    });
+  });
+
+  it("does not flag a map that has not ended on a comma", () => {
+    expect(parse("{a: 1", true)).not.toHaveProperty("__trailingComma");
   });
 });

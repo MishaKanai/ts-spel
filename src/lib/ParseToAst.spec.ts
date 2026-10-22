@@ -1,4 +1,5 @@
 import { Ast } from "./Ast";
+import { ParsingError } from "./CustomErrors";
 import { parse } from "./ParseToAst";
 
 it("should parse empty string", () => {
@@ -801,4 +802,17 @@ it("takes allowWeirdQuoteCharacters as a boolean or an option", () => {
     expected
   );
   expect(() => parse("“a”")).toThrow();
+});
+
+it("treats null options as no options", () => {
+  // Plain-JS callers passed null for the old allowWeirdQuoteCharacters boolean.
+  expect(parse("a", false, null as any)).toEqual(parse("a"));
+});
+
+it("refuses a number literal too large for a finite double", () => {
+  expect(() => parse("9".repeat(400))).toThrow(ParsingError);
+  expect(parse("1" + "0".repeat(308))).toEqual({
+    type: "NumberLiteral",
+    value: 1e308,
+  });
 });

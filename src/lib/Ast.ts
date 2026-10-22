@@ -198,6 +198,8 @@ type AstNode =
         [elem: string]: Ast;
       };
       __unclosed?: true;
+      /** Graceful mode: the unclosed map ended on a ',', so a key comes next. */
+      __trailingComma?: true;
     }
   | {
       type: "InlineList";

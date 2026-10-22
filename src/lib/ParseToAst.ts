@@ -47,7 +47,8 @@ export const parse = function (
   const { offsets = false, allowWeirdQuoteCharacters = false } =
     typeof options === "boolean"
       ? { allowWeirdQuoteCharacters: options }
-      : options;
+      : // Plain-JS callers passed null for the old boolean argument.
+        options ?? {};
   let index = 0;
 
   // Opt-in because recording ranges made every parse ~1.6x slower, and graceful parsing runs
@@ -1182,6 +1183,7 @@ export const parse = function (
       index = fnbacktrack;
       // look for dictionary key/value pairs
       let wasComma = false;
+      let endedOnComma = false;
       if (
         utils.zeroOrMore(() => {
           utils.whitSpc();
@@ -1212,8 +1214,13 @@ export const parse = function (
               return elem;
             }
           } else if (wasComma && graceful) {
-            // we ended on a ','
-            dict[""] = null;
+            // we ended on a ','. The "" entry is the original marker, kept for existing readers;
+            // a real '' key now parses, so it must not be overwritten, and __trailingComma is
+            // the signal that holds either way.
+            if (!Object.prototype.hasOwnProperty.call(dict, "")) {
+              dict[""] = null;
+            }
+            endedOnComma = true;
             return null;
           }
           return null;
@@ -1229,11 +1236,15 @@ export const parse = function (
           if (Object.keys(dict).length === 0) {
             return foundGracefulList ? returnGracefulList() : foundGracefulList;
           }
-          return {
+          const unclosedMap: Ast = {
             type: "InlineMap",
             elements: dict,
             __unclosed: true,
           };
+          if (endedOnComma) {
+            unclosedMap.__trailingComma = true;
+          }
+          return unclosedMap;
         }
       } else {
         index = fnbacktrack;
@@ -1251,9 +1262,18 @@ export const parse = function (
     utils.whitSpc();
     const str = utils.regExp(/\d+(?:\.\d+)?/);
     if (str) {
+      const value = parseFloat(str);
+      // Past ~1.8e308 parseFloat gives Infinity, which prettyPrint would emit as a property name.
+      if (!Number.isFinite(value)) {
+        throw new ParsingError(
+          input,
+          index - str.length,
+          "Number literal out of range"
+        );
+      }
       return {
         type: "NumberLiteral",
-        value: parseFloat(str),
+        value,
       };
     }
     return null;

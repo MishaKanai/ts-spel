@@ -55,7 +55,8 @@ export class ParsingError extends CustomError {
       | "Expected ] for selection expression ?["
       | "Expected ] for selection expression ^["
       | "Expected ] for selection expression $["
-      | "Expected ] for Projection expression ![",
+      | "Expected ] for Projection expression !["
+      | "Number literal out of range",
     message: string = reason,
     cause?: Error
   ) {
