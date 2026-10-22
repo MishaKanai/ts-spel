@@ -1,4 +1,26 @@
-export type Ast =
+/**
+ * Where `parse` found a node: the half-open range [start, end) of UTF-16 code units in the
+ * parsed string, so `input.slice(node.start, node.end)` is the node's source text.
+ *
+ * - Leading and trailing whitespace is excluded.
+ * - Parentheses around the node itself are excluded; a parent's range covers its children's
+ *   parentheses. In `(a + b) * c` the OpPlus is `a + b` and the OpMultiply is the whole string.
+ * - In a CompoundExpression, every component after the first includes its navigation syntax:
+ *   `.b`, `?.b`, `.m(1)`, `['k']`, `?['k']`, `.![x]`, `?.?[x]`. Such a slice does not parse alone
+ *   (prefix a start node, `x` + slice); every other node's slice re-parses to an AST equal to it.
+ * - In graceful mode an incomplete node covers the text consumed for it.
+ *
+ * Both properties are non-enumerable: equality checks, JSON.stringify and object spread do not
+ * see them, and nodes built or copied outside the parser have none.
+ */
+export type SourceRange = {
+  start?: number;
+  end?: number;
+};
+
+export type Ast = AstNode & SourceRange;
+
+type AstNode =
   | {
       type: "StringLiteral";
       value: string;

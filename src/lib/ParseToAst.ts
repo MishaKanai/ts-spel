@@ -37,6 +37,31 @@ export const parse = function (
 ): Ast {
   let index = 0;
 
+  // Non-enumerable so that toEqual, JSON.stringify and spread see the same AST as before
+  // offsets existed. A node copied by spread loses them, which is right: its text may differ.
+  const setRange = (node: Ast, start: number, end: number) => {
+    while (start < end && fastCharCodeIsWhitespace(input.charCodeAt(start))) {
+      start++;
+    }
+    while (end > start && fastCharCodeIsWhitespace(input.charCodeAt(end - 1))) {
+      end--;
+    }
+    Object.defineProperties(node, {
+      start: { value: start, writable: true, configurable: true },
+      end: { value: end, writable: true, configurable: true },
+    });
+  };
+  // The innermost production that returns a node sets its range; productions that pass a
+  // child through unchanged (and parenExpression, so parens stay outside) leave it alone.
+  const ranged = (production: () => Ast | null) => (): Ast | null => {
+    const start = index;
+    const node = production();
+    if (node && !Object.prototype.hasOwnProperty.call(node, "start")) {
+      setRange(node, start, index);
+    }
+    return node;
+  };
+
   const log = (...args) => {
     if (logFlag) {
       console.log(input.slice(index), ...args);
@@ -144,7 +169,7 @@ export const parse = function (
         })()
       : undefined;
 
-  const expression = function (): Ast | null {
+  const expression = ranged(function (): Ast | null {
     log("expression");
     utils.whitSpc();
     const exp1 = logicalOrExpression();
@@ -188,11 +213,12 @@ export const parse = function (
     } else {
       return exp1;
     }
-  };
+  });
 
   const logicalOrExpression = function (): Ast | null {
     log("logicalOrExpression");
     utils.whitSpc();
+    const start = index;
     let left: Ast | null = logicalAndExpression();
     utils.whitSpc();
     utils.zeroOrMore(() => {
@@ -207,6 +233,7 @@ export const parse = function (
               right,
               _isClosed: getOpIsClosed(),
             };
+            setRange(left, start, index);
             return left;
           } else {
             throw new ParsingError(input, index, "No right operand for ||");
@@ -226,6 +253,7 @@ export const parse = function (
             right,
             _isClosed: getOpIsClosed(),
           };
+          setRange(left, start, index);
           return left;
         } else {
           throw new ParsingError(input, index, "No right operand for OR");
@@ -241,6 +269,7 @@ export const parse = function (
   const logicalAndExpression = function (): Ast | null {
     log("logicalAndExpression");
     utils.whitSpc();
+    const start = index;
     let left: Ast | null = relationalExpression();
     utils.whitSpc();
     utils.zeroOrMore(() => {
@@ -255,6 +284,7 @@ export const parse = function (
               right,
               _isClosed: getOpIsClosed(),
             };
+            setRange(left, start, index);
             return left;
           } else {
             throw new ParsingError(input, index, "No right operand for &&");
@@ -273,6 +303,7 @@ export const parse = function (
             left,
             right,
           };
+          setRange(left, start, index);
           return left;
         } else {
           throw new ParsingError(input, index, "No right operand for AND");
@@ -289,7 +320,7 @@ export const parse = function (
   /*
   OPEQ NOT IMPLEMENTED!!
   */
-  const relationalExpression = function (): Ast | null {
+  const relationalExpression = ranged(function (): Ast | null {
     log("relationalExpression");
     utils.whitSpc();
     const left: Ast | null = sumExpression();
@@ -420,11 +451,12 @@ export const parse = function (
     }
     log("fell through");
     return left;
-  };
+  });
 
   const sumExpression = function (): Ast | null {
     log("sumExpression");
     utils.whitSpc();
+    const start = index;
     let left: Ast | null = productExpression();
     utils.whitSpc();
     log("sumExpression left", left);
@@ -444,6 +476,7 @@ export const parse = function (
           right,
           _isClosed: getOpIsClosed(),
         };
+        setRange(left, start, index);
         return left;
       } else if (utils.char("-")) {
         log("minuscase");
@@ -457,6 +490,7 @@ export const parse = function (
           right,
           _isClosed: getOpIsClosed(),
         };
+        setRange(left, start, index);
         return left;
       } else {
         log("missed all");
@@ -469,6 +503,7 @@ export const parse = function (
   const productExpression = function (): Ast | null {
     log("productExpression");
     utils.whitSpc();
+    const start = index;
     let left: Ast | null = powerExpression();
     utils.whitSpc();
     utils.zeroOrMore(() => {
@@ -485,6 +520,7 @@ export const parse = function (
             right,
             _isClosed: getOpIsClosed(),
           };
+          setRange(left, start, index);
           return left;
         }
         throw new ParsingError(input, index, "No right operand for *");
@@ -500,6 +536,7 @@ export const parse = function (
             right,
             _isClosed: getOpIsClosed(),
           };
+          setRange(left, start, index);
           return left;
         }
         throw new ParsingError(input, index, "No right operand for /");
@@ -515,6 +552,7 @@ export const parse = function (
             right,
             _isClosed: getOpIsClosed(),
           };
+          setRange(left, start, index);
           return left;
         }
         throw new ParsingError(input, index, "No right operand for %");
@@ -523,7 +561,7 @@ export const parse = function (
     });
     return left;
   };
-  const powerExpression = function (): Ast | null {
+  const powerExpression = ranged(function (): Ast | null {
     log("powerExpression");
     utils.whitSpc();
     const left: Ast | null = unaryExpression();
@@ -541,11 +579,11 @@ export const parse = function (
       index = backtrack;
     }
     return left;
-  };
-  const unaryExpression = function (): Ast | null {
+  });
+  const unaryExpression = ranged(function (): Ast | null {
     log("unaryExpression");
     return utils.firstOf(negative, not, primaryExpression);
-  };
+  });
   const negative = function (): Ast | null {
     log("negative");
     let operand: Ast | null = null;
@@ -592,7 +630,7 @@ export const parse = function (
     }
     return sn;
   };
-  const startNode = function (): Ast | null {
+  const startNode = ranged(function (): Ast | null {
     log("startNode");
     return utils.firstOf(
       parenExpression,
@@ -601,8 +639,8 @@ export const parse = function (
       () => methodOrProperty(false),
       inlineListOrMap
     );
-  };
-  const node = function (): Ast | null {
+  });
+  const node = ranged(function (): Ast | null {
     log("node");
     return utils.firstOf(
       projection,
@@ -611,7 +649,7 @@ export const parse = function (
       indexExp,
       functionOrVar
     );
-  };
+  });
   const navProperty = function (): Ast | null {
     log("navProperty");
     if (utils.char(".")) {

@@ -11,6 +11,6 @@
     "skipLibCheck": true,
     "esModuleInterop": true
   },
-  "exclude": ["src/**/*.spec.ts"],
+  "exclude": ["src/**/*.spec.ts", "src/**/*.testdata.ts"],
   "include": ["src/**/*"]
 }

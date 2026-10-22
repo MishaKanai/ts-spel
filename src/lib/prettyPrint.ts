@@ -39,6 +39,8 @@ const needsParen = (parent: Ast, child: Ast) => {
   return getOrder(parent) >= getOrder(child);
 };
 
+const quote = (str: string) => `"${str.replace(/"/g, `""`)}"`;
+
 const prettyPrint = (ast: Ast) => {
   const maybeParen = (child: Ast) =>
     needsParen(ast, child) ? `(${prettyPrint(child)})` : prettyPrint(child);
@@ -47,7 +49,11 @@ const prettyPrint = (ast: Ast) => {
       return `${ast.value}`;
     }
     case "CompoundExpression": {
-      return ast.expressionComponents.reduce((prev, curr) => {
+      // `(a + b).c` parses to [OpPlus, c]; printed bare, the head would re-parse as `a + b.c`.
+      const [head, ...rest] = ast.expressionComponents;
+      const headText =
+        getOrder(head) < 9 ? `(${prettyPrint(head)})` : prettyPrint(head);
+      return rest.reduce((prev, curr) => {
         switch (curr.type) {
           case "MethodReference":
           case "PropertyReference":
@@ -56,12 +62,12 @@ const prettyPrint = (ast: Ast) => {
           case "SelectionLast":
           case "Projection":
             const { nullSafeNavigation } = curr;
-            const nav = !prev ? "" : nullSafeNavigation ? "?." : ".";
+            const nav = nullSafeNavigation ? "?." : ".";
             return `${prev}${nav}${prettyPrint(curr)}`;
           default:
             return `${prev}${prettyPrint(curr)}`;
         }
-      }, "");
+      }, headText);
     }
     case "Elvis": {
       return `${maybeParen(ast.expression)} ?: ${maybeParen(ast.ifFalse)}`;
@@ -70,17 +76,19 @@ const prettyPrint = (ast: Ast) => {
       return `#${ast.functionName}(${ast.args.map(prettyPrint).join(", ")})`;
     }
     case "Indexer": {
-      return `[${prettyPrint(ast.index)}]`;
+      return `${ast.nullSafeNavigation ? "?" : ""}[${prettyPrint(ast.index)}]`;
     }
     case "InlineList": {
       return `{${ast.elements.map(prettyPrint).join(", ")}}`;
     }
     case "InlineMap": {
-      return `{${Object.entries(ast.elements)
+      const entries = Object.entries(ast.elements);
+      if (entries.length === 0) {
+        return "{:}"; // `{}` is the empty list
+      }
+      return `{${entries
         .map(([k, v]) => {
-          const key = /^([a-zA-Z_$][a-zA-Z0-9_$]*)/.test(k)
-            ? k
-            : `"${k.replace(`"`, `""`)}"`;
+          const key = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(k) ? k : quote(k);
           return `${key}: ${prettyPrint(v)}`;
         })
         .join(",\n")}}`;
@@ -164,10 +172,7 @@ const prettyPrint = (ast: Ast) => {
       return `$[${prettyPrint(ast.expression)}]`;
     }
     case "StringLiteral": {
-      const escape = (str: string) => str.replace(`"`, `""`);
-      return /\r|\n/.exec(ast.value)
-        ? `"""${escape(ast.value)}"""`
-        : `"${escape(ast.value)}"`;
+      return quote(ast.value);
     }
     case "Ternary": {
       return `${maybeParen(ast.expression)} ? ${maybeParen(
