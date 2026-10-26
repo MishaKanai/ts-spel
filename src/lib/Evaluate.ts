@@ -223,7 +223,8 @@ export const getEvaluator = (
     expression: Ast,
     reverse: boolean
   ) => {
-    const value = reverse ? array.reverse() : array;
+    // reverse() is in place and `array` can be the caller's context, so search a copy.
+    const value = reverse ? [...array].reverse() : array;
     const result = value.find((e) => {
       stack.push(e);
       const result = evaluate(expression);
