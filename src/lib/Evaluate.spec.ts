@@ -74,6 +74,40 @@ describe("Evaluation", () => {
     const r1 = parse("{1, 2, 3, 4, 5}?.$[#this % 2 == 0]");
     expect(getEvaluator({}, {})(r1)).toBe(4);
   });
+  describe("selection leaves the context array unchanged", () => {
+    const evalTwice = (expression: string, items: unknown[]) => {
+      const ctx = { items };
+      const evaluate = getEvaluator(ctx, {});
+      const ast = parse(expression);
+      return { results: [evaluate(ast), evaluate(ast)], ctx };
+    };
+    it.each(["items.$[#this > 0]", "items?.$[#this > 0]"])(
+      "%s returns the last match on every call",
+      (expression) => {
+        const { results, ctx } = evalTwice(expression, [1, 2, 3, 0]);
+        expect(results).toEqual([3, 3]);
+        expect(ctx.items).toEqual([1, 2, 3, 0]);
+      }
+    );
+    it("SelectionLast on an empty array", () => {
+      const { results, ctx } = evalTwice("items.$[#this > 0]", []);
+      expect(results).toEqual([null, null]);
+      expect(ctx.items).toEqual([]);
+    });
+    it("SelectionFirst", () => {
+      const { results, ctx } = evalTwice("items.^[#this > 0]", [0, 1, 2, 3]);
+      expect(results).toEqual([1, 1]);
+      expect(ctx.items).toEqual([0, 1, 2, 3]);
+    });
+    it("SelectionAll", () => {
+      const { results, ctx } = evalTwice("items.?[#this > 0]", [3, 0, 1]);
+      expect(results).toEqual([
+        [3, 1],
+        [3, 1],
+      ]);
+      expect(ctx.items).toEqual([3, 0, 1]);
+    });
+  });
   it("Safe-navigation SelectionFirst", () => {
     const r1 = parse("null?.^[#this % 2 == 0]");
     expect(getEvaluator({}, {})(r1)).toBe(null);
